@@ -1,12 +1,12 @@
 //! A URI which supports IPv4, IPv6, domain names, and segmented [`Path`]s.
 
 use std::cmp::Ordering;
+use std::fmt;
+use std::iter;
 use std::str::FromStr;
-use std::{fmt, iter};
 
-use derive_more::*;
+use derive_more::Display;
 use get_size::GetSize;
-use get_size_derive::*;
 use smallvec::SmallVec;
 
 pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -104,13 +104,14 @@ impl<'a> From<PathBuf> for ToUrl<'a> {
 
 impl<'a> From<&'a [PathSegment]> for ToUrl<'a> {
     fn from(path: &'a [PathSegment]) -> Self {
-        Self::PathRef(path.into())
+        Self::PathRef(path)
     }
 }
 
 /// The protocol portion of a [`Link`] (e.g. "http")
-#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq, GetSize)]
+#[derive(Copy, Clone, Debug, Default, Hash, Eq, PartialEq, get_size_derive::GetSize)]
 pub enum Protocol {
+    #[default]
     HTTP,
 }
 
@@ -125,12 +126,6 @@ impl Ord for Protocol {
         match (self, other) {
             (Self::HTTP, Self::HTTP) => Ordering::Equal,
         }
-    }
-}
-
-impl Default for Protocol {
-    fn default() -> Protocol {
-        Protocol::HTTP
     }
 }
 
@@ -227,7 +222,7 @@ impl PartialEq<IpAddr> for Address {
 }
 
 /// The host component of a [`Link`] (e.g. "http://127.0.0.1:8702")
-#[derive(Clone, Debug, Hash, Eq, PartialEq, GetSize)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq, get_size_derive::GetSize)]
 pub struct Host {
     protocol: Protocol,
     address: Address,
@@ -398,7 +393,7 @@ impl fmt::Display for Host {
 }
 
 /// An HTTP Link with an optional [`Address`] and [`PathBuf`]
-#[derive(Clone, Default, Eq, Hash, PartialEq, GetSize)]
+#[derive(Clone, Default, Eq, Hash, PartialEq, get_size_derive::GetSize)]
 pub struct Link {
     host: Option<Host>,
     path: PathBuf,
@@ -474,15 +469,13 @@ impl PartialEq<String> for Link {
 
 impl PartialEq<str> for Link {
     fn eq(&self, other: &str) -> bool {
+        let other = other.strip_suffix('/').unwrap_or(other);
+
         if other.is_empty() {
-            false
-        } else if other.starts_with('/') {
-            self.host.is_none() && &self.path == other
-        } else if other.ends_with('/') {
-            self.to_string() == other[..other.len() - 1]
-        } else {
-            self.to_string() == other
+            return false;
         }
+
+        other.parse::<Link>().is_ok_and(|other| self == &other)
     }
 }
 
@@ -537,11 +530,7 @@ impl FromStr for Link {
             return Err(format!("cannot parse {} as a Link: invalid protocol", s).into());
         }
 
-        let s = if s.ends_with('/') {
-            &s[..s.len() - 1]
-        } else {
-            s
-        };
+        let s = s.strip_suffix('/').unwrap_or(s);
 
         let segments: Segments<&str> = s.split('/').collect();
 
@@ -575,7 +564,7 @@ impl Ord for Link {
     fn cmp(&self, other: &Self) -> Ordering {
         match (&self.host, &other.host) {
             (None, None) => self.path.cmp(&other.path),
-            (Some(this), Some(that)) => match this.cmp(&that) {
+            (Some(this), Some(that)) => match this.cmp(that) {
                 Ordering::Equal => self.path.cmp(&other.path),
                 ordering => ordering,
             },
@@ -628,7 +617,7 @@ impl<D: async_hash::Digest> async_hash::Hash<D> for Link {
 }
 
 #[cfg(feature = "hash")]
-impl<'a, D: async_hash::Digest> async_hash::Hash<D> for &'a Link {
+impl<D: async_hash::Digest> async_hash::Hash<D> for &Link {
     fn hash(self) -> async_hash::Output<D> {
         if self == &Link::default() {
             async_hash::default_hash::<D>()

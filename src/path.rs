@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::{fmt, iter};
 
 use get_size::GetSize;
-use smallvec::*;
+use smallvec::smallvec;
 
 use super::{label, Id, Label, ParseError, Segments};
 
@@ -69,8 +69,8 @@ impl From<PathLabel> for PathBuf {
     fn from(path: PathLabel) -> Self {
         let segments = path
             .segments
-            .into_iter()
-            .map(|segment| label(*segment))
+            .iter()
+            .map(|&segment| label(segment))
             .map(PathSegment::from)
             .collect();
 
@@ -87,21 +87,16 @@ impl<const N: usize> From<[PathSegment; N]> for PathBuf {
 }
 
 /// A segmented link safe to use with a filesystem or via HTTP.
+#[derive(Default)]
 pub struct Path<'a> {
     inner: &'a [PathSegment],
-}
-
-impl Default for Path<'static> {
-    fn default() -> Self {
-        Self { inner: &[] }
-    }
 }
 
 impl<'a> Deref for Path<'a> {
     type Target = [PathSegment];
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        self.inner
     }
 }
 
@@ -158,7 +153,7 @@ impl PathBuf {
     /// Construct a new [`PathBuf`] by cloning the path segments in the given `slice`.
     pub fn from_slice(segments: &[PathSegment]) -> Self {
         Self {
-            segments: segments.into_iter().cloned().collect(),
+            segments: segments.iter().cloned().collect(),
         }
     }
 
@@ -223,10 +218,10 @@ impl<D: async_hash::Digest> async_hash::Hash<D> for PathBuf {
 }
 
 #[cfg(feature = "hash")]
-impl<'a, D: async_hash::Digest> async_hash::Hash<D> for &'a PathBuf {
+impl<D: async_hash::Digest> async_hash::Hash<D> for &PathBuf {
     fn hash(self) -> async_hash::Output<D> {
         if self == &PathBuf::default() {
-            return async_hash::default_hash::<D>();
+            async_hash::default_hash::<D>()
         } else {
             async_hash::Hash::<D>::hash(self.to_string())
         }
