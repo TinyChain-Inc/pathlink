@@ -1,11 +1,9 @@
 use std::str::FromStr;
 
-use async_trait::async_trait;
 use destream::{de, en};
 
 use super::{Host, Link, PathBuf};
 
-#[async_trait]
 impl de::FromStream for Host {
     type Context = ();
 
@@ -27,7 +25,6 @@ impl<'en> en::IntoStream<'en> for Host {
     }
 }
 
-#[async_trait]
 impl de::FromStream for Link {
     type Context = ();
 
@@ -49,7 +46,6 @@ impl<'en> en::IntoStream<'en> for Link {
     }
 }
 
-#[async_trait]
 impl de::FromStream for PathBuf {
     type Context = ();
 
