@@ -1,11 +1,11 @@
 [package]
 name = "pathlink"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["code@tinychain.net"]
 edition = "2021"
 license = "Apache-2.0"
 description = "A URL type whose path can also be used as a filesystem path, for Rust"
-repository = "https://github.com/haydnv/pathlink"
+repository = "https://github.com/TinyChain-Inc/pathlink.git"
 readme = "README.md"
 
 categories = ["data-structures"]
@@ -14,19 +14,18 @@ keywords = ["ordered", "set", "map", "custom", "order"]
 [features]
 all = ["hash", "stream", "serialize", "uuid"]
 hash = ["async-hash", "hex", "hr-id/hash"]
-stream = ["async-trait", "destream", "hr-id/stream"]
+stream = ["destream", "hr-id/stream"]
 serialize = ["serde", "hr-id/serde"]
 uuid = ["hr-id/uuid"]
 
 [dependencies]
 async-hash = { version = "0.5", optional = true }
-async-trait = { version = "0.1", optional = true }
 derive_more = { version = "1.0", features=["display"] }
-destream = { version = "0.8", optional = true }
+destream = { path = "../destream", version = "0.10.1", optional = true }
 get-size = "0.1"
 get-size-derive = "0.1"
 hex = { version = "0.4", optional = true }
-hr-id = "0.6"
+hr-id = { path = "../hr-id", version = "0.7.0" }
 safecast = "0.2"
 serde = { version = "1.0", optional = true }
 smallvec = "1.13"
