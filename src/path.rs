@@ -1,5 +1,6 @@
 //! A segmented [`Path`] safe to use as a filesystem [`std::path::Path`] or in a [`super::Link`].
 
+use std::cmp::Ordering;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::{fmt, iter};
@@ -13,6 +14,7 @@ use super::{Id, Label, ParseError, Segments, label};
 pub type PathSegment = Id;
 
 /// A constant representing a [`PathBuf`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PathLabel {
     segments: &'static [&'static str],
 }
@@ -99,7 +101,7 @@ impl<const N: usize> From<[PathSegment; N]> for PathBuf {
 }
 
 /// A segmented link safe to use with a filesystem or via HTTP.
-#[derive(Default)]
+#[derive(Clone, Copy, Default, Hash, Eq, PartialEq)]
 pub struct Path<'a> {
     inner: &'a [PathSegment],
 }
@@ -145,6 +147,18 @@ impl<'a> fmt::Display for Path<'a> {
         }
 
         Ok(())
+    }
+}
+
+impl<'a> PartialOrd for Path<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a> Ord for Path<'a> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.inner.cmp(other.inner)
     }
 }
 
@@ -304,6 +318,18 @@ impl PartialEq<[PathSegment]> for PathBuf {
     }
 }
 
+impl PartialOrd for PathBuf {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PathBuf {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.segments.cmp(&other.segments)
+    }
+}
+
 impl From<PathSegment> for PathBuf {
     fn from(segment: PathSegment) -> PathBuf {
         PathBuf {
@@ -379,6 +405,8 @@ impl fmt::Display for PathBuf {
 mod test {
     use super::*;
 
+    fn assert_ord<T: Ord>() {}
+
     #[test]
     fn test_path_label_to_string() {
         let path = path_label(&[]);
@@ -389,5 +417,42 @@ mod test {
 
         let path = path_label(&["one", "two"]);
         assert_eq!(path.to_string(), "/one/two".to_string());
+    }
+
+    #[test]
+    fn path_types_are_ordered() {
+        assert_ord::<Path<'_>>();
+        assert_ord::<PathBuf>();
+        assert_ord::<PathLabel>();
+    }
+
+    #[test]
+    fn path_buf_orders_by_segments() {
+        let mut paths = [
+            "/two".parse::<PathBuf>().expect("path"),
+            "/one/two".parse::<PathBuf>().expect("path"),
+            "/one".parse::<PathBuf>().expect("path"),
+            "/".parse::<PathBuf>().expect("path"),
+        ];
+
+        paths.sort();
+
+        assert_eq!(
+            paths.map(|path| path.to_string()),
+            [
+                String::from("/"),
+                String::from("/one"),
+                String::from("/one/two"),
+                String::from("/two")
+            ]
+        );
+    }
+
+    #[test]
+    fn borrowed_path_orders_by_segments() {
+        let one = "/one".parse::<PathBuf>().expect("path");
+        let two = "/two".parse::<PathBuf>().expect("path");
+
+        assert!(Path::from(&one[..]) < Path::from(&two[..]));
     }
 }
