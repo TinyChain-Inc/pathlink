@@ -40,3 +40,17 @@ impl Serialize for PathBuf {
         self.to_string().serialize(serializer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_serde<T: Serialize + for<'de> Deserialize<'de>>() {}
+
+    #[test]
+    fn host_link_pathbuf_have_serde_impls() {
+        assert_serde::<Host>();
+        assert_serde::<Link>();
+        assert_serde::<PathBuf>();
+    }
+}
