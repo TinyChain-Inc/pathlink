@@ -7,7 +7,7 @@ use std::{fmt, iter};
 use get_size::GetSize;
 use smallvec::smallvec;
 
-use super::{label, Id, Label, ParseError, Segments};
+use super::{Id, Label, ParseError, Segments, label};
 
 /// A segment of a [`Path`]
 pub type PathSegment = Id;

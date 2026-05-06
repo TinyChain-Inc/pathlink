@@ -8,10 +8,11 @@ use std::str::FromStr;
 use derive_more::Display;
 use get_size::GetSize;
 use smallvec::SmallVec;
+use url::Url;
 
 pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-pub use hr_id::{label, Id, Label, ParseError};
+pub use hr_id::{Id, Label, ParseError, label};
 
 mod path;
 #[cfg(feature = "serialize")]
@@ -123,6 +124,7 @@ impl<'a> From<&'a [PathSegment]> for ToUrl<'a> {
 pub enum Protocol {
     #[default]
     HTTP,
+    HTTPS,
 }
 
 impl PartialOrd for Protocol {
@@ -135,6 +137,9 @@ impl Ord for Protocol {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::HTTP, Self::HTTP) => Ordering::Equal,
+            (Self::HTTP, Self::HTTPS) => Ordering::Less,
+            (Self::HTTPS, Self::HTTP) => Ordering::Greater,
+            (Self::HTTPS, Self::HTTPS) => Ordering::Equal,
         }
     }
 }
@@ -143,6 +148,7 @@ impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match self {
             Self::HTTP => "http",
+            Self::HTTPS => "https",
         })
     }
 }
@@ -152,7 +158,7 @@ impl fmt::Display for Protocol {
 pub enum Address {
     IPv4(Ipv4Addr),
     IPv6(Ipv6Addr),
-    // TODO: international domain names with IDNA: https://docs.rs/idna/0.3.0/idna/
+    Domain(String),
 }
 
 impl Default for Address {
@@ -169,6 +175,7 @@ impl Address {
         match self {
             Self::IPv4(addr) => Some((*addr).into()),
             Self::IPv6(addr) => Some((*addr).into()),
+            Self::Domain(_) => None,
         }
     }
 
@@ -177,6 +184,7 @@ impl Address {
         match self {
             Self::IPv4(addr) => addr.is_loopback(),
             Self::IPv6(addr) => addr.is_loopback(),
+            Self::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
         }
     }
 }
@@ -192,8 +200,11 @@ impl Ord for Address {
         match (self, other) {
             (Self::IPv4(this), Self::IPv4(that)) => this.cmp(that),
             (Self::IPv6(this), Self::IPv6(that)) => this.cmp(that),
-            (Self::IPv4(_this), _) => Ordering::Less,
-            (Self::IPv6(_this), _) => Ordering::Greater,
+            (Self::Domain(this), Self::Domain(that)) => this.cmp(that),
+            (Self::IPv4(_), _) => Ordering::Less,
+            (Self::IPv6(_), Self::IPv4(_)) => Ordering::Greater,
+            (Self::IPv6(_), Self::Domain(_)) => Ordering::Less,
+            (Self::Domain(_), _) => Ordering::Greater,
         }
     }
 }
@@ -203,6 +214,7 @@ impl GetSize for Address {
         match self {
             Self::IPv4(_) => 4,
             Self::IPv6(_) => 16,
+            Self::Domain(domain) => domain.len(),
         }
     }
 }
@@ -300,70 +312,42 @@ impl FromStr for Host {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Host, ParseError> {
-        if !s.starts_with("http://") {
-            return Err(format!("invalid protocol: {}", s).into());
+        // Delegate host/domain/IP parsing and IDNA handling to `url` so this crate
+        // remains focused on protocol + path semantics rather than URL-host
+        // normalization/validation rules.
+        let url =
+            Url::parse(s).map_err(|cause| ParseError::from(format!("invalid host: {cause}")))?;
+
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(ParseError::from(format!(
+                "invalid host (userinfo not allowed): {s}"
+            )));
         }
 
-        let protocol = Protocol::HTTP;
+        if url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
+            return Err(ParseError::from(format!(
+                "invalid host (unexpected URL components): {s}"
+            )));
+        }
 
-        let s = &s[7..];
-
-        let (address, port): (Address, Option<u16>) = if s.contains("::") {
-            let mut segments: Segments<&str> = s.split("::").collect();
-            let port: Option<u16> = if segments.last().unwrap().contains(':') {
-                let last_segment: Segments<&str> = segments.pop().unwrap().split(':').collect();
-                if last_segment.len() == 2 {
-                    segments.push(last_segment[0]);
-
-                    let port = last_segment[1].parse().map_err(|cause| {
-                        format!("{} is not a valid port number: {}", last_segment[1], cause)
-                    })?;
-
-                    Some(port)
-                } else {
-                    return Err(format!("invalid IPv6 address: {}", s).into());
-                }
-            } else {
-                None
-            };
-
-            let address = segments.join("::");
-            let address: Ipv6Addr = address.parse().map_err(|cause| {
-                ParseError::from(format!(
-                    "{} is not a valid IPv6 address: {}",
-                    address, cause
-                ))
-            })?;
-
-            (address.into(), port)
-        } else {
-            let (address, port) = if s.contains(':') {
-                let segments: Segments<&str> = s.split(':').collect();
-                if segments.len() == 2 {
-                    let port: u16 = segments[1].parse().map_err(|cause| {
-                        ParseError::from(format!(
-                            "{} is not a valid port number: {}",
-                            segments[1], cause
-                        ))
-                    })?;
-
-                    (segments[0], Some(port))
-                } else {
-                    return Err(format!("invalid network address: {}", s).into());
-                }
-            } else {
-                (s, None)
-            };
-
-            let address: Ipv4Addr = address.parse().map_err(|cause| {
-                ParseError::from(format!(
-                    "{} is not a valid IPv4 address: {}",
-                    address, cause
-                ))
-            })?;
-
-            (address.into(), port)
+        let protocol = match url.scheme() {
+            "http" => Protocol::HTTP,
+            "https" => Protocol::HTTPS,
+            _ => return Err(ParseError::from(format!("invalid protocol: {s}"))),
         };
+
+        let address = match url.host() {
+            Some(url::Host::Ipv4(addr)) => Address::IPv4(addr),
+            Some(url::Host::Ipv6(addr)) => Address::IPv6(addr),
+            Some(url::Host::Domain(domain)) => Address::Domain(domain.to_string()),
+            None => {
+                return Err(ParseError::from(format!(
+                    "invalid host (missing address): {s}"
+                )));
+            }
+        };
+
+        let port = url.port();
 
         Ok(Host {
             protocol,
@@ -579,7 +563,7 @@ impl FromStr for Link {
                 host: None,
                 path: s.parse()?,
             });
-        } else if !s.starts_with("http://") {
+        } else if !s.starts_with("http://") && !s.starts_with("https://") {
             return Err(format!("cannot parse {} as a Link: invalid protocol", s).into());
         }
 
@@ -677,5 +661,84 @@ impl<D: async_hash::Digest> async_hash::Hash<D> for &Link {
         } else {
             async_hash::Hash::<D>::hash(self.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Address, Host, Link, Protocol};
+
+    #[test]
+    fn parse_http_host_ipv4() {
+        let host: Host = "http://127.0.0.1:80".parse().expect("host");
+        assert_eq!(host.protocol(), Protocol::HTTP);
+        assert_eq!(host.port(), Some(80));
+        assert_eq!(
+            host.address(),
+            &Address::from(std::net::Ipv4Addr::new(127, 0, 0, 1))
+        );
+    }
+
+    #[test]
+    fn parse_https_host_domain() {
+        let host: Host = "https://example.com:443".parse().expect("host");
+        assert_eq!(host.protocol(), Protocol::HTTPS);
+        assert_eq!(host.port(), Some(443));
+        assert_eq!(host.address(), &Address::Domain("example.com".to_string()));
+    }
+
+    #[test]
+    fn parse_https_idn_host_normalizes_to_ascii() {
+        let host: Host = "https://bücher.example".parse().expect("host");
+        assert_eq!(
+            host.address(),
+            &Address::Domain("xn--bcher-kva.example".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_invalid_domain_name_fails() {
+        let err = "https://-bad-.com"
+            .parse::<Host>()
+            .expect_err("invalid domain should fail");
+        assert!(err.to_string().contains("invalid domain name"));
+    }
+
+    #[test]
+    fn parse_link_accepts_https() {
+        let link: Link = "https://example.com/a/b".parse().expect("link");
+        assert_eq!(link.to_string(), "https://example.com/a/b");
+    }
+
+    #[test]
+    fn parse_host_rejects_userinfo() {
+        let err = "https://user@example.com"
+            .parse::<Host>()
+            .expect_err("userinfo should be rejected");
+        assert!(err.to_string().contains("userinfo"));
+    }
+
+    #[test]
+    fn parse_host_rejects_query() {
+        let err = "https://example.com?x=1"
+            .parse::<Host>()
+            .expect_err("query should be rejected");
+        assert!(err.to_string().contains("unexpected URL components"));
+    }
+
+    #[test]
+    fn parse_host_rejects_fragment() {
+        let err = "https://example.com#frag"
+            .parse::<Host>()
+            .expect_err("fragment should be rejected");
+        assert!(err.to_string().contains("unexpected URL components"));
+    }
+
+    #[test]
+    fn parse_host_rejects_path() {
+        let err = "https://example.com/a"
+            .parse::<Host>()
+            .expect_err("path should be rejected");
+        assert!(err.to_string().contains("unexpected URL components"));
     }
 }

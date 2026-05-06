@@ -40,3 +40,34 @@ impl Serialize for PathBuf {
         self.to_string().serialize(serializer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{from_str, to_string};
+
+    fn assert_serde<T: Serialize + for<'de> Deserialize<'de>>() {}
+
+    #[test]
+    fn host_link_pathbuf_have_serde_impls() {
+        assert_serde::<Host>();
+        assert_serde::<Link>();
+        assert_serde::<PathBuf>();
+    }
+
+    #[test]
+    fn host_serde_roundtrip() {
+        let host: Host = "https://example.com:443".parse().expect("host");
+        let encoded = to_string(&host).expect("serialize host");
+        let decoded: Host = from_str(&encoded).expect("deserialize host");
+        assert_eq!(decoded, host);
+    }
+
+    #[test]
+    fn link_serde_roundtrip() {
+        let link: Link = "https://bücher.example/a/b".parse().expect("link");
+        let encoded = to_string(&link).expect("serialize link");
+        let decoded: Link = from_str(&encoded).expect("deserialize link");
+        assert_eq!(decoded, link);
+    }
+}
