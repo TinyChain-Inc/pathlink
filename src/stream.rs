@@ -69,3 +69,22 @@ impl<'en> en::ToStream<'en> for PathBuf {
         e.encode_str(&self.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_destream<T>()
+    where
+        T: de::FromStream<Context = ()>,
+        for<'en> T: en::ToStream<'en> + en::IntoStream<'en>,
+    {
+    }
+
+    #[test]
+    fn host_link_pathbuf_have_destream_impls() {
+        assert_destream::<Host>();
+        assert_destream::<Link>();
+        assert_destream::<PathBuf>();
+    }
+}
