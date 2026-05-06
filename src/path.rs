@@ -22,6 +22,11 @@ impl PathLabel {
     pub fn len(&self) -> usize {
         self.segments.len()
     }
+
+    /// Return `true` if this path label has no segments.
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
 }
 
 impl<Idx: std::slice::SliceIndex<[&'static str]>> std::ops::Index<Idx> for PathLabel {
