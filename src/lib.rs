@@ -380,6 +380,12 @@ impl FromStr for Host {
                     ))
                 })?;
 
+                if !domain_is_valid(&domain) {
+                    return Err(ParseError::from(format!(
+                        "invalid domain name {address}: invalid DNS label"
+                    )));
+                }
+
                 Address::Domain(domain)
             };
 
@@ -392,6 +398,28 @@ impl FromStr for Host {
             port,
         })
     }
+}
+
+fn domain_is_valid(domain: &str) -> bool {
+    if domain.is_empty() || domain.len() > 253 {
+        return false;
+    }
+
+    domain.split('.').all(domain_label_is_valid)
+}
+
+fn domain_label_is_valid(label: &str) -> bool {
+    if label.is_empty() || label.len() > 63 {
+        return false;
+    }
+
+    if label.starts_with('-') || label.ends_with('-') {
+        return false;
+    }
+
+    label
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 impl PartialOrd for Host {
