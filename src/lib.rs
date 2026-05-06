@@ -839,7 +839,7 @@ impl<D: async_hash::Digest> async_hash::Hash<D> for &Link {
 
 #[cfg(test)]
 mod tests {
-    use super::{Address, Domain, Host, Link, Protocol};
+    use super::{Address, Domain, Host, Link, PathBuf, Protocol};
 
     #[test]
     fn parse_http_host_ipv4() {
@@ -954,6 +954,17 @@ mod tests {
     fn parse_link_accepts_https() {
         let link: Link = "https://example.com/a/b".parse().expect("link");
         assert_eq!(link.to_string(), "https://example.com/a/b");
+    }
+
+    #[test]
+    fn parse_link_without_path_canonicalizes_to_root_path() {
+        let link: Link = "https://example.com".parse().expect("link");
+        assert_eq!(link.path(), &PathBuf::default());
+        assert_eq!(link.to_string(), "https://example.com/");
+
+        let link: Link = "https://example.com/".parse().expect("link");
+        assert_eq!(link.path(), &PathBuf::default());
+        assert_eq!(link.to_string(), "https://example.com/");
     }
 
     #[test]

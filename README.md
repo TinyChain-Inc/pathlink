@@ -23,6 +23,10 @@ Host parsing intentionally accepts only the URL components represented by
 `Host`: a scheme, host address, and optional port. Userinfo, paths, queries,
 and fragments are rejected when parsing a `Host`.
 
+For HTTP and HTTPS links, an empty path is equivalent to the root path according
+to IETF RFC 9110 Section 4.2.3, so parsing `https://example.com` canonicalizes and
+displays it as `https://example.com/`.
+
 Domain names are normalized to ASCII/Punycode through the `url` crate's IDNA
 handling and then validated as DNS-style labels. Display, equality, ordering,
 hashing, and serialization use that normalized form. `Address::Domain` stores a
