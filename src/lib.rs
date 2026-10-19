@@ -248,8 +248,8 @@ impl Ord for Domain {
 }
 
 impl GetSize for Domain {
-    fn get_size(&self) -> usize {
-        self.0.len()
+    fn get_heap_size(&self) -> usize {
+        2 * std::mem::size_of::<usize>() + self.0.len()
     }
 }
 
@@ -310,11 +310,10 @@ impl Ord for Address {
 }
 
 impl GetSize for Address {
-    fn get_size(&self) -> usize {
+    fn get_heap_size(&self) -> usize {
         match self {
-            Self::IPv4(_) => 4,
-            Self::IPv6(_) => 16,
-            Self::Domain(domain) => domain.get_size(),
+            Self::IPv4(_) | Self::IPv6(_) => 0,
+            Self::Domain(domain) => domain.get_heap_size(),
         }
     }
 }

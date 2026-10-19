@@ -217,8 +217,18 @@ impl PathBuf {
 }
 
 impl GetSize for PathBuf {
-    fn get_size(&self) -> usize {
-        self.segments.iter().map(|segment| segment.get_size()).sum()
+    fn get_heap_size(&self) -> usize {
+        let segments = if self.segments.spilled() {
+            self.segments.capacity() * std::mem::size_of::<PathSegment>()
+        } else {
+            0
+        };
+        segments
+            + self
+                .segments
+                .iter()
+                .map(GetSize::get_heap_size)
+                .sum::<usize>()
     }
 }
 
