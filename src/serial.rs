@@ -4,47 +4,48 @@ use super::{Host, Link, PathBuf};
 
 impl<'de> Deserialize<'de> for Host {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let inner: &str = Deserialize::deserialize(deserializer)?;
+        let inner: String = Deserialize::deserialize(deserializer)?;
         inner.parse().map_err(serde::de::Error::custom)
     }
 }
 
 impl Serialize for Host {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_string().serialize(serializer)
+        serializer.collect_str(self)
     }
 }
 
 impl<'de> Deserialize<'de> for Link {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let inner: &str = Deserialize::deserialize(deserializer)?;
+        let inner: String = Deserialize::deserialize(deserializer)?;
         inner.parse().map_err(serde::de::Error::custom)
     }
 }
 
 impl Serialize for Link {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_string().serialize(serializer)
+        serializer.collect_str(self)
     }
 }
 
 impl<'de> Deserialize<'de> for PathBuf {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let inner: &str = Deserialize::deserialize(deserializer)?;
+        let inner: String = Deserialize::deserialize(deserializer)?;
         inner.parse().map_err(serde::de::Error::custom)
     }
 }
 
 impl Serialize for PathBuf {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to_string().serialize(serializer)
+        serializer.collect_str(self)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::{from_str, to_string};
+
+    use super::*;
 
     fn assert_serde<T: Serialize + for<'de> Deserialize<'de>>() {}
 
@@ -69,5 +70,14 @@ mod tests {
         let encoded = to_string(&link).expect("serialize link");
         let decoded: Link = from_str(&encoded).expect("deserialize link");
         assert_eq!(decoded, link);
+        for path in ["/café/literal%25name", "/日本語/100%25"] {
+            let link: Link = path.parse().expect("Unicode and percent path");
+            let encoded = to_string(&link).expect("serialize link");
+            assert_eq!(encoded, to_string(&link.to_string()).unwrap());
+            assert_eq!(from_str::<Link>(&encoded).unwrap(), link);
+            let path = link.path();
+            let encoded = to_string(&path).unwrap();
+            assert_eq!(from_str::<PathBuf>(&encoded).unwrap(), *path);
+        }
     }
 }

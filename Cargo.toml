@@ -30,6 +30,7 @@ safecast = "0.2"
 serde = { version = "1.0", optional = true }
 smallvec = "1.13"
 url = "2.5"
+percent-encoding = "2.3"
 
 [dev-dependencies]
 serde_json = "1.0"

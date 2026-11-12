@@ -1,19 +1,55 @@
 //! A segmented [`Path`] safe to use as a filesystem [`std::path::Path`] or in a [`super::Link`].
 
 use std::cmp::Ordering;
+use std::fmt;
+use std::iter;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
-use std::{fmt, iter};
 
 use get_size::GetSize;
 use smallvec::smallvec;
 
 use super::{Id, Label, ParseError, Segments, label};
 
+// A path segment is an identifier, not pre-escaped URI text. Keep only URI
+// unreserved bytes literal in URI formatting; URI parsing decodes exactly once.
+const SEGMENT_ESCAPE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+pub(super) fn encoded_segment(segment: &str) -> impl fmt::Display + '_ {
+    percent_encoding::utf8_percent_encode(segment, SEGMENT_ESCAPE)
+}
+
+fn parse_uri_segment(segment: &str) -> Result<PathSegment, ParseError> {
+    let bytes = segment.as_bytes();
+
+    for (i, &byte) in bytes.iter().enumerate() {
+        if byte == b'%'
+            && (i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_hexdigit()
+                || !bytes[i + 2].is_ascii_hexdigit())
+        {
+            return Err("invalid URI segment escape".into());
+        }
+    }
+
+    percent_encoding::percent_decode_str(segment)
+        .decode_utf8()
+        .map_err(|_| ParseError::from("invalid URI segment UTF-8"))?
+        .parse()
+}
+
 /// A segment of a [`Path`]
 pub type PathSegment = Id;
 
 /// A constant representing a [`PathBuf`].
+///
+/// Native labels must contain valid identifier segments. Conversion to [`Label`]
+/// or [`Id`] additionally requires exactly one segment; parse untrusted paths
+/// through [`PathBuf`] instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PathLabel {
     segments: &'static [&'static str],
@@ -52,12 +88,12 @@ impl fmt::Display for PathLabel {
         let last = segments.next_back();
 
         for id in segments {
-            f.write_str(id)?;
+            write!(f, "{}", id)?;
             f.write_str("/")?;
         }
 
         if let Some(last) = last {
-            f.write_str(last)?;
+            write!(f, "{}", last)?;
         }
 
         Ok(())
@@ -190,7 +226,7 @@ impl PathBuf {
         }
     }
 
-    /// Destructures this [`PathBuf`] into its underlying [`SmallVec`].
+    /// Destructures this [`PathBuf`] into its underlying [`smallvec::SmallVec`].
     pub fn into_inner(self) -> Segments<PathSegment> {
         self.segments
     }
@@ -272,24 +308,7 @@ impl PartialEq<String> for PathBuf {
 
 impl PartialEq<str> for PathBuf {
     fn eq(&self, other: &str) -> bool {
-        if other.is_empty() {
-            return false;
-        } else if self.segments.is_empty() {
-            return other == "/";
-        }
-
-        let mut i = 0;
-        for segment in other.split('/') {
-            if i >= self.segments.len() {
-                return false;
-            } else if segment == self.segments[i] {
-                i += 1;
-            } else {
-                return false;
-            }
-        }
-
-        self.segments.len() == i
+        other.parse::<Self>().is_ok_and(|path| *self == path)
     }
 }
 
@@ -361,6 +380,19 @@ impl FromStr for PathBuf {
 
     #[inline]
     fn from_str(to: &str) -> Result<Self, Self::Err> {
+        Self::parse_with(to, str::parse)
+    }
+}
+
+impl PathBuf {
+    pub(super) fn from_uri(to: &str) -> Result<Self, ParseError> {
+        Self::parse_with(to, parse_uri_segment)
+    }
+
+    fn parse_with(
+        to: &str,
+        segment: impl Fn(&str) -> Result<PathSegment, ParseError>,
+    ) -> Result<Self, ParseError> {
         if to == "/" {
             Ok(PathBuf {
                 segments: smallvec![],
@@ -371,12 +403,12 @@ impl FromStr for PathBuf {
             let segments = to
                 .split('/')
                 .skip(1)
-                .map(PathSegment::from_str)
+                .map(&segment)
                 .collect::<Result<Segments<PathSegment>, ParseError>>()?;
 
             Ok(PathBuf { segments })
         } else {
-            to.parse()
+            segment(to)
                 .map(|id| PathBuf {
                     segments: iter::once(id).collect(),
                 })
@@ -409,6 +441,16 @@ impl fmt::Display for PathBuf {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", Path::from(&self[..]))
     }
+}
+
+pub(super) fn fmt_uri(path: &[PathSegment], f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    if path.is_empty() {
+        return f.write_str("/");
+    }
+    for segment in path {
+        write!(f, "/{}", encoded_segment(segment.as_str()))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

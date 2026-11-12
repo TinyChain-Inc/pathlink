@@ -2,18 +2,15 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::iter;
+pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use derive_more::Display;
 use get_size::GetSize;
+pub use hr_id::{Id, Label, ParseError, label};
 use smallvec::SmallVec;
 use url::Url;
-
-pub use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-pub use hr_id::{Id, Label, ParseError, label};
 
 mod path;
 #[cfg(feature = "serialize")]
@@ -80,18 +77,8 @@ impl<'a> fmt::Display for ToUrl<'a> {
         match self {
             Self::Link(link) => fmt::Display::fmt(link, f),
             Self::LinkRef(link) => fmt::Display::fmt(link, f),
-            Self::Path(path) => fmt::Display::fmt(path, f),
-            Self::PathRef(path) => {
-                if path.is_empty() {
-                    f.write_str("/")?;
-                }
-
-                for segment in path.iter() {
-                    write!(f, "/{segment}")?;
-                }
-
-                Ok(())
-            }
+            Self::Path(path) => path::fmt_uri(path, f),
+            Self::PathRef(path) => path::fmt_uri(path, f),
         }
     }
 }
@@ -674,12 +661,6 @@ impl PartialEq<String> for Link {
 
 impl PartialEq<str> for Link {
     fn eq(&self, other: &str) -> bool {
-        let other = other.strip_suffix('/').unwrap_or(other);
-
-        if other.is_empty() {
-            return false;
-        }
-
         other.parse::<Link>().is_ok_and(|other| self == &other)
     }
 }
@@ -729,7 +710,7 @@ impl FromStr for Link {
         if s.starts_with('/') {
             return Ok(Link {
                 host: None,
-                path: s.parse()?,
+                path: PathBuf::from_uri(s)?,
             });
         } else if s
             .split_once("://")
@@ -739,26 +720,18 @@ impl FromStr for Link {
             return Err(format!("cannot parse {} as a Link: invalid protocol", s).into());
         }
 
-        let s = s.strip_suffix('/').unwrap_or(s);
-
-        let segments: Segments<&str> = s.split('/').collect();
-
-        if segments.is_empty() {
-            return Err(format!("invalid Link: {}", s).into());
-        }
-
-        let host: Host = segments[..3].join("/").parse()?;
-
-        let segments = &segments[3..];
-
-        let segments = segments
-            .iter()
-            .map(|s| s.parse())
-            .collect::<Result<Segments<PathSegment>, ParseError>>()?;
+        let (scheme, rest) = s.split_once("://").expect("validated protocol delimiter");
+        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let host: Host = format!("{scheme}://{authority}").parse()?;
+        let path = if path.is_empty() {
+            PathBuf::new()
+        } else {
+            PathBuf::from_uri(&format!("/{path}"))?
+        };
 
         Ok(Link {
             host: Some(host),
-            path: iter::FromIterator::from_iter(segments),
+            path,
         })
     }
 }
@@ -801,20 +774,18 @@ impl TryFrom<Link> for PathBuf {
 impl fmt::Debug for Link {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(host) = &self.host {
-            write!(f, "{:?}{:?}", host, self.path)
-        } else {
-            fmt::Debug::fmt(&self.path, f)
+            write!(f, "{host:?}")?;
         }
+        path::fmt_uri(&self.path, f)
     }
 }
 
 impl fmt::Display for Link {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(host) = &self.host {
-            write!(f, "{}{}", host, self.path)
-        } else {
-            fmt::Display::fmt(&self.path, f)
+            write!(f, "{host}")?;
         }
+        path::fmt_uri(&self.path, f)
     }
 }
 
@@ -1018,3 +989,7 @@ mod tests {
         assert!(err.to_string().contains("unexpected URL components"));
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/identity.rs"]
+mod identity;

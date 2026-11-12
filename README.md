@@ -33,3 +33,20 @@ hashing, and serialization use that normalized form. `Address::Domain` stores a
 validated `Domain` value backed by immutable shared string storage, so domain
 addresses cannot be constructed from an arbitrary `String` and cloning them does
 not clone the underlying domain string.
+
+## Literal paths and URI text
+
+`Id`, `Path`, `PathBuf`, and `PathLabel` contain and display literal identifier
+text. Native path parsing splits segments without percent-decoding. Their string
+serialization is literal in JSON and TBON; the codec supplies its own escaping.
+
+`Link` is a URI: it parses escapes once and displays canonical escaped segments.
+Use `ToUrl::from(&path[..])` when formatting a native path as a request target,
+or construct a Link directly from the path. A literal native path `/a%2fb`
+becomes URI `/a%252fb`; URI `/a%2fb` instead attempts to include a slash in one
+identifier and is rejected. Unicode follows the same explicit conversion boundary.
+Symbolic references and ordinary map keys are not URI text.
+
+Native path strings and cryptographic path digests for escaped names intentionally
+change to literal text. Link serialization/hashes, host rules, and the empty-path
+hash sentinel are unchanged. There is no legacy escape interpretation or migration.
