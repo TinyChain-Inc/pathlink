@@ -8,16 +8,20 @@ use std::sync::Arc;
 
 use derive_more::Display;
 use get_size::GetSize;
-pub use hr_id::{Id, Label, ParseError, label};
+pub use hr_id::{Id, Label, label};
 use smallvec::SmallVec;
 use url::Url;
 
+mod error;
 mod path;
 #[cfg(feature = "serialize")]
 mod serial;
 #[cfg(feature = "stream")]
 mod stream;
 
+use error::ErrorKind;
+
+pub use error::ParseError;
 pub use path::*;
 
 /// A port number
@@ -108,7 +112,9 @@ impl<'a> From<&'a [PathSegment]> for ToUrl<'a> {
 }
 
 /// The protocol portion of a [`Link`] (e.g. "http" or "https")
-#[derive(Copy, Clone, Debug, Default, Hash, Eq, PartialEq, get_size_derive::GetSize)]
+#[derive(
+    Copy, Clone, Debug, Default, Hash, Eq, PartialEq, Ord, PartialOrd, get_size_derive::GetSize,
+)]
 pub enum Protocol {
     #[default]
     HTTP,
@@ -125,23 +131,6 @@ impl Protocol {
     }
 }
 
-impl PartialOrd for Protocol {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Protocol {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Self::HTTP, Self::HTTP) => Ordering::Equal,
-            (Self::HTTP, Self::HTTPS) => Ordering::Less,
-            (Self::HTTPS, Self::HTTP) => Ordering::Greater,
-            (Self::HTTPS, Self::HTTPS) => Ordering::Equal,
-        }
-    }
-}
-
 impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(self.as_str())
@@ -153,9 +142,9 @@ impl FromStr for Protocol {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            s if s.eq_ignore_ascii_case("http") => Ok(Self::HTTP),
-            s if s.eq_ignore_ascii_case("https") => Ok(Self::HTTPS),
-            _ => Err(ParseError::from(format!("invalid protocol: {s}"))),
+            scheme if scheme.eq_ignore_ascii_case(Self::HTTP.as_str()) => Ok(Self::HTTP),
+            scheme if scheme.eq_ignore_ascii_case(Self::HTTPS.as_str()) => Ok(Self::HTTPS),
+            _ => Err(ParseError(ErrorKind::Protocol)),
         }
     }
 }
@@ -202,8 +191,12 @@ impl FromStr for Domain {
     type Err = ParseError;
 
     fn from_str(domain: &str) -> Result<Self, Self::Err> {
-        let url = Url::parse(&format!("http://{domain}/"))
-            .map_err(|cause| ParseError::from(format!("invalid domain name: {cause}")))?;
+        let url = Url::parse(&format!("http://{domain}/")).map_err(|cause| {
+            ParseError(ErrorKind::Url {
+                context: "domain name",
+                cause,
+            })
+        })?;
 
         if !url.username().is_empty()
             || url.password().is_some()
@@ -212,12 +205,12 @@ impl FromStr for Domain {
             || url.fragment().is_some()
             || url.path() != "/"
         {
-            return Err(ParseError::from(format!("invalid domain name: {domain}")));
+            return Err(ParseError(ErrorKind::Domain));
         }
 
         match url.host() {
             Some(url::Host::Domain(domain)) => Self::from_normalized(domain),
-            _ => Err(ParseError::from(format!("invalid domain name: {domain}"))),
+            _ => Err(ParseError(ErrorKind::Domain)),
         }
     }
 }
@@ -359,7 +352,7 @@ fn validate_domain_name(domain: &str) -> Result<(), ParseError> {
     let domain = domain.strip_suffix('.').unwrap_or(domain);
 
     if domain.is_empty() || domain.len() > 253 {
-        return Err(ParseError::from(format!("invalid domain name: {domain}")));
+        return Err(ParseError(ErrorKind::Domain));
     }
 
     for label in domain.split('.') {
@@ -374,7 +367,7 @@ fn validate_domain_name(domain: &str) -> Result<(), ParseError> {
             || label.starts_with('-')
             || label.ends_with('-')
         {
-            return Err(ParseError::from(format!("invalid domain name: {domain}")));
+            return Err(ParseError(ErrorKind::Domain));
         }
     }
 
@@ -382,39 +375,37 @@ fn validate_domain_name(domain: &str) -> Result<(), ParseError> {
 }
 
 fn explicit_port(s: &str) -> Result<Option<Port>, ParseError> {
-    let (_, authority) = s
-        .split_once("://")
-        .ok_or_else(|| ParseError::from(format!("invalid host: {s}")))?;
+    let (_, authority) = s.split_once("://").ok_or(ParseError(ErrorKind::Host))?;
 
     let authority = authority.strip_suffix('/').unwrap_or(authority);
 
     if let Some(authority) = authority.strip_prefix('[') {
         let (_, suffix) = authority
             .split_once(']')
-            .ok_or_else(|| ParseError::from(format!("invalid host: {s}")))?;
+            .ok_or(ParseError(ErrorKind::Host))?;
 
         if suffix.is_empty() {
             Ok(None)
         } else if let Some(port) = suffix.strip_prefix(':') {
-            parse_port(port, s)
+            parse_port(port)
         } else {
-            Err(ParseError::from(format!("invalid host: {s}")))
+            Err(ParseError(ErrorKind::Host))
         }
     } else if let Some((_, port)) = authority.rsplit_once(':') {
         if port.is_empty() {
-            Err(ParseError::from(format!("invalid host: {s}")))
+            Err(ParseError(ErrorKind::Host))
         } else {
-            parse_port(port, s)
+            parse_port(port)
         }
     } else {
         Ok(None)
     }
 }
 
-fn parse_port(port: &str, s: &str) -> Result<Option<Port>, ParseError> {
+fn parse_port(port: &str) -> Result<Option<Port>, ParseError> {
     port.parse()
         .map(Some)
-        .map_err(|cause| ParseError::from(format!("invalid port in {s}: {cause}")))
+        .map_err(|cause| ParseError(ErrorKind::Port(cause)))
 }
 
 /// The host component of a [`Link`] (e.g. "http://127.0.0.1:8702")
@@ -462,30 +453,30 @@ impl FromStr for Host {
     fn from_str(s: &str) -> Result<Host, ParseError> {
         let protocol: Protocol = s
             .split_once("://")
-            .ok_or_else(|| ParseError::from(format!("invalid protocol: {s}")))?
+            .ok_or(ParseError(ErrorKind::Protocol))?
             .0
             .parse()?;
 
         // Delegate host/domain/IP parsing and IDNA handling to `url` so this crate
         // remains focused on protocol + path semantics rather than URL-host
         // normalization/validation rules.
-        let url =
-            Url::parse(s).map_err(|cause| ParseError::from(format!("invalid host: {cause}")))?;
+        let url = Url::parse(s).map_err(|cause| {
+            ParseError(ErrorKind::Url {
+                context: "host",
+                cause,
+            })
+        })?;
 
         if !url.username().is_empty() || url.password().is_some() {
-            return Err(ParseError::from(format!(
-                "invalid host (userinfo not allowed): {s}"
-            )));
+            return Err(ParseError(ErrorKind::Userinfo));
         }
 
         if url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
-            return Err(ParseError::from(format!(
-                "invalid host (unexpected URL components): {s}"
-            )));
+            return Err(ParseError(ErrorKind::Components));
         }
 
         if url.scheme() != protocol.as_str() {
-            return Err(ParseError::from(format!("invalid protocol: {s}")));
+            return Err(ParseError(ErrorKind::Protocol));
         }
 
         let address = match url.host() {
@@ -493,9 +484,7 @@ impl FromStr for Host {
             Some(url::Host::Ipv6(addr)) => Address::IPv6(addr),
             Some(url::Host::Domain(domain)) => Address::Domain(Domain::from_normalized(domain)?),
             None => {
-                return Err(ParseError::from(format!(
-                    "invalid host (missing address): {s}"
-                )));
+                return Err(ParseError(ErrorKind::MissingAddress));
             }
         };
 
@@ -712,21 +701,19 @@ impl FromStr for Link {
                 host: None,
                 path: PathBuf::from_uri(s)?,
             });
-        } else if s
-            .split_once("://")
-            .map(|(protocol, _)| protocol.parse::<Protocol>().is_err())
-            .unwrap_or(true)
-        {
-            return Err(format!("cannot parse {} as a Link: invalid protocol", s).into());
         }
 
-        let (scheme, rest) = s.split_once("://").expect("validated protocol delimiter");
-        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-        let host: Host = format!("{scheme}://{authority}").parse()?;
+        let (_, rest) = s.split_once("://").ok_or(ParseError(ErrorKind::Protocol))?;
+        let (authority, path) = match rest.find('/') {
+            Some(index) => s.split_at(s.len() - rest.len() + index),
+            None => (s, ""),
+        };
+
+        let host: Host = authority.parse()?;
         let path = if path.is_empty() {
             PathBuf::new()
         } else {
-            PathBuf::from_uri(&format!("/{path}"))?
+            PathBuf::from_uri(path)?
         };
 
         Ok(Link {
@@ -763,10 +750,7 @@ impl TryFrom<Link> for PathBuf {
         if link.host.is_none() {
             Ok(link.path)
         } else {
-            Err(ParseError::from(format!(
-                "expected a path but found {}",
-                link
-            )))
+            Err(ParseError(ErrorKind::ExpectedPath))
         }
     }
 }
@@ -809,7 +793,25 @@ impl<D: async_hash::Digest> async_hash::Hash<D> for &Link {
 
 #[cfg(test)]
 mod tests {
+    use std::error::Error as _;
+
+    use super::error::ErrorKind;
     use super::{Address, Domain, Host, Link, PathBuf, Protocol};
+
+    #[test]
+    fn parse_failures_retain_positions_and_native_causes() {
+        let escape = "/bad%zz".parse::<Link>().unwrap_err();
+        assert!(matches!(escape.0, ErrorKind::Escape { offset: 3 }));
+
+        let identifier = "/bad%2fname".parse::<Link>().unwrap_err();
+        assert!(identifier.source().unwrap().is::<hr_id::ParseError>());
+
+        let utf8 = "/%ff".parse::<Link>().unwrap_err();
+        assert!(utf8.source().unwrap().is::<std::str::Utf8Error>());
+
+        let host = "http://[invalid]/".parse::<Link>().unwrap_err();
+        assert!(host.source().unwrap().is::<url::ParseError>());
+    }
 
     #[test]
     fn parse_http_host_ipv4() {
@@ -889,7 +891,14 @@ mod tests {
             "example.com/path",
         ] {
             let err = Domain::new(domain).expect_err("invalid domain should fail");
-            assert!(err.to_string().contains("invalid domain name"));
+            assert!(matches!(
+                err.0,
+                ErrorKind::Domain
+                    | ErrorKind::Url {
+                        context: "domain name",
+                        ..
+                    }
+            ));
         }
     }
 
@@ -916,14 +925,16 @@ mod tests {
             let err = host
                 .parse::<Host>()
                 .expect_err("invalid domain should fail");
-            assert!(err.to_string().contains("invalid domain name"));
+            assert!(matches!(err.0, ErrorKind::Domain));
         }
     }
 
     #[test]
-    fn parse_link_accepts_https() {
-        let link: Link = "https://example.com/a/b".parse().expect("link");
-        assert_eq!(link.to_string(), "https://example.com/a/b");
+    fn parse_link_accepts_supported_protocols() {
+        for text in ["http://example.com/a/b", "https://example.com/a/b"] {
+            let link: Link = text.parse().expect("link");
+            assert_eq!(link.to_string(), text);
+        }
     }
 
     #[test]
@@ -954,7 +965,7 @@ mod tests {
         let err = "ftp://example.com/a"
             .parse::<Link>()
             .expect_err("unsupported protocol should fail");
-        assert!(err.to_string().contains("invalid protocol"));
+        assert!(matches!(err.0, ErrorKind::Protocol));
     }
 
     #[test]
@@ -962,7 +973,7 @@ mod tests {
         let err = "https://user@example.com"
             .parse::<Host>()
             .expect_err("userinfo should be rejected");
-        assert!(err.to_string().contains("userinfo"));
+        assert!(matches!(err.0, ErrorKind::Userinfo));
     }
 
     #[test]
@@ -970,7 +981,7 @@ mod tests {
         let err = "https://example.com?x=1"
             .parse::<Host>()
             .expect_err("query should be rejected");
-        assert!(err.to_string().contains("unexpected URL components"));
+        assert!(matches!(err.0, ErrorKind::Components));
     }
 
     #[test]
@@ -978,7 +989,7 @@ mod tests {
         let err = "https://example.com#frag"
             .parse::<Host>()
             .expect_err("fragment should be rejected");
-        assert!(err.to_string().contains("unexpected URL components"));
+        assert!(matches!(err.0, ErrorKind::Components));
     }
 
     #[test]
@@ -986,7 +997,7 @@ mod tests {
         let err = "https://example.com/a"
             .parse::<Host>()
             .expect_err("path should be rejected");
-        assert!(err.to_string().contains("unexpected URL components"));
+        assert!(matches!(err.0, ErrorKind::Components));
     }
 }
 

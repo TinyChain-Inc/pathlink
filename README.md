@@ -23,6 +23,16 @@ Host parsing intentionally accepts only the URL components represented by
 `Host`: a scheme, host address, and optional port. Userinfo, paths, queries,
 and fragments are rejected when parsing a `Host`.
 
+`Protocol` defines the supported schemes and matches them case-insensitively.
+`Host`, `Link`, and untyped literal recognition use that same scheme policy.
+
+Use ordinary `FromStr` parsing for strict input, or `text.parse::<Link>().ok()`
+for optional recognition. This crate's `ParseError` retains failure reasons,
+segment-relative byte positions, and native causes without copying the input or
+allocating diagnostic text. `Display` formats errors when reported; callers can
+add input context there. Identifier errors convert into this crate's error type.
+Explicit custom-message conversions retain owned diagnostic text.
+
 For HTTP and HTTPS links, an empty path is equivalent to the root path according
 to IETF RFC 9110 Section 4.2.3, so parsing `https://example.com` canonicalizes and
 displays it as `https://example.com/`.
@@ -39,6 +49,8 @@ not clone the underlying domain string.
 `Id`, `Path`, `PathBuf`, and `PathLabel` contain and display literal identifier
 text. Native path parsing splits segments without percent-decoding. Their string
 serialization is literal in JSON and TBON; the codec supplies its own escaping.
+The `stream` feature supports borrowed and owned encoding of `PathLabel`
+directly, without constructing a dynamic path or formatted string.
 
 `Link` is a URI: it parses escapes once and displays canonical escaped segments.
 Use `ToUrl::from(&path[..])` when formatting a native path as a request target,
