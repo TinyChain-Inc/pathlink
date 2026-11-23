@@ -786,7 +786,7 @@ impl<D: async_hash::Digest> async_hash::Hash<D> for &Link {
         if self == &Link::default() {
             async_hash::default_hash::<D>()
         } else {
-            async_hash::Hash::<D>::hash(self.to_string())
+            async_hash::Hash::<D>::hash(format_args!("{self}"))
         }
     }
 }
