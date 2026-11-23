@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use destream::{de, en};
 
-use super::{Host, Link, PathBuf};
+use super::{Host, Link, PathBuf, PathLabel};
 
 impl de::FromStream for Host {
     type Context = ();
@@ -15,13 +15,13 @@ impl de::FromStream for Host {
 
 impl<'en> en::ToStream<'en> for Host {
     fn to_stream<E: en::Encoder<'en>>(&'en self, e: E) -> Result<E::Ok, E::Error> {
-        e.encode_str(self.to_string().as_str())
+        e.collect_str(self)
     }
 }
 
 impl<'en> en::IntoStream<'en> for Host {
     fn into_stream<E: en::Encoder<'en>>(self, e: E) -> Result<E::Ok, E::Error> {
-        e.encode_str(self.to_string().as_str())
+        e.collect_str(&self)
     }
 }
 
@@ -36,13 +36,13 @@ impl de::FromStream for Link {
 
 impl<'en> en::ToStream<'en> for Link {
     fn to_stream<E: en::Encoder<'en>>(&'en self, e: E) -> Result<E::Ok, E::Error> {
-        en::IntoStream::into_stream(self.to_string(), e)
+        e.collect_str(self)
     }
 }
 
 impl<'en> en::IntoStream<'en> for Link {
     fn into_stream<E: en::Encoder<'en>>(self, e: E) -> Result<E::Ok, E::Error> {
-        en::IntoStream::into_stream(self.to_string(), e)
+        e.collect_str(&self)
     }
 }
 
@@ -60,13 +60,25 @@ impl de::FromStream for PathBuf {
 
 impl<'en> en::IntoStream<'en> for PathBuf {
     fn into_stream<E: en::Encoder<'en>>(self, e: E) -> Result<E::Ok, E::Error> {
-        e.encode_str(&self.to_string())
+        e.collect_str(&self)
     }
 }
 
 impl<'en> en::ToStream<'en> for PathBuf {
     fn to_stream<E: en::Encoder<'en>>(&'en self, e: E) -> Result<E::Ok, E::Error> {
-        e.encode_str(&self.to_string())
+        e.collect_str(self)
+    }
+}
+
+impl<'en> en::IntoStream<'en> for PathLabel {
+    fn into_stream<E: en::Encoder<'en>>(self, e: E) -> Result<E::Ok, E::Error> {
+        e.collect_str(&self)
+    }
+}
+
+impl<'en> en::ToStream<'en> for PathLabel {
+    fn to_stream<E: en::Encoder<'en>>(&'en self, e: E) -> Result<E::Ok, E::Error> {
+        e.collect_str(self)
     }
 }
 

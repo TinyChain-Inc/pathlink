@@ -9,6 +9,7 @@ use std::str::FromStr;
 use get_size::GetSize;
 use smallvec::smallvec;
 
+use super::error::ErrorKind;
 use super::{Id, Label, ParseError, Segments, label};
 
 // A path segment is an identifier, not pre-escaped URI text. Keep only URI
@@ -32,14 +33,15 @@ fn parse_uri_segment(segment: &str) -> Result<PathSegment, ParseError> {
                 || !bytes[i + 1].is_ascii_hexdigit()
                 || !bytes[i + 2].is_ascii_hexdigit())
         {
-            return Err("invalid URI segment escape".into());
+            return Err(ParseError(ErrorKind::Escape { offset: i }));
         }
     }
 
     percent_encoding::percent_decode_str(segment)
         .decode_utf8()
-        .map_err(|_| ParseError::from("invalid URI segment UTF-8"))?
+        .map_err(|cause| ParseError(ErrorKind::Utf8(cause)))?
         .parse()
+        .map_err(ParseError::from)
 }
 
 /// A segment of a [`Path`]
@@ -380,7 +382,7 @@ impl FromStr for PathBuf {
 
     #[inline]
     fn from_str(to: &str) -> Result<Self, Self::Err> {
-        Self::parse_with(to, str::parse)
+        Self::parse_with(to, |segment| segment.parse().map_err(ParseError::from))
     }
 }
 
@@ -398,7 +400,7 @@ impl PathBuf {
                 segments: smallvec![],
             })
         } else if to.ends_with('/') {
-            Err(format!("Path {} cannot end with a slash", to).into())
+            Err(ParseError(ErrorKind::TrailingSlash))
         } else if to.starts_with('/') {
             let segments = to
                 .split('/')
@@ -408,11 +410,9 @@ impl PathBuf {
 
             Ok(PathBuf { segments })
         } else {
-            segment(to)
-                .map(|id| PathBuf {
-                    segments: iter::once(id).collect(),
-                })
-                .map_err(|cause| format!("invalid path: {}", cause).into())
+            segment(to).map(|id| PathBuf {
+                segments: iter::once(id).collect(),
+            })
         }
     }
 }
